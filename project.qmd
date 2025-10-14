@@ -1,0 +1,2176 @@
+---
+title: "Rapport de biostatistique"
+author: "Pierre et Florian"
+format:
+  pdf:
+    toc: true
+    toc-title: Sommaire
+    code-fold: true
+    echo: true
+    eval: true
+    incremental: true
+    df_print: kable
+    fontsize: 12pt
+---
+
+\newpage
+
+# I. Introduction 
+
+L’objectif de ce dossier est de traiter les valeurs manquantes dans notre base de données afin d'assurer une analyse fiable et complète. Pour ce faire, nous appliquerons trois méthodes d'imputation : la régression logistique binaire, le remplacement par la moyenne, et l'imputation multiple MICE (imputations multivariées par équations chainées).
+
+La base de données selectionnée est issue d'une étude visant à explorer l'impact de la gestion budgétaire sur les performances académiques des étudiants des Pays de la Loire (niveaux Bac+1 et au-delà) durant l'année universitaire 2023-2024. Afin d'examiner cette relation, un questionnaire a été diffusé auprès des étudiants via les réseaux sociaux et les messageries universitaires.
+
+Ce jeu de données contient 7 variables quantitatives et 15 variables qualitatives, décrivant les caractéristiques de 135 étudiants.
+
+\newpage
+
+# II. Import des packages
+
+```{r}
+library(kableExtra)
+library(knitr)
+library(openxlsx)
+library(car)
+library(MASS)
+library(tidyverse)
+library(EnvStats)
+library(stats)
+library(lmtest)
+library(PerformanceAnalytics)
+library(corrplot)
+library(sjPlot)
+library(ggplot2)
+library(leaps)
+library(AER)
+library(naniar)
+library(grid)
+library(mice)
+```
+
+\newpage
+
+# III. Présentation des données
+
+## A. Variables quantitatives
+
+Dans les variables quantitatives, nous retrouvons la moyenne générale, MOYENNE, un indicateur qui synthétise les résultats obtenus dans l'ensemble des matières étudiées. Cet indicateur reflète la performance académique globale d'un étudiant.
+
+Nous avons également le taux d'assiduité, ASSIDUITE, codé sur une échelle de 1 à 10 (1 correspondant à un étudiant qui ne fréquente jamais les cours et 10 à un étudiant qui les fréquente toujours).
+
+La variable RESTAURANT représente le nombre moyen de restaurants ou fast-foods fréquentés mensuellement par un étudiant.
+
+De plus, le niveau de stress financier, STRESS, codé également de 1 à 10, reflète la perception des étudiants quant à leur situation financière.
+
+Enfin, nous trouvons les variables SOMMEIL et TRAJET : la première correspond au temps de sommeil moyen quotidien des étudiants, tandis que la seconde mesure le temps de trajet moyen nécessaire pour se rendre à leur établissement universitaire.
+
+```{r}
+quantis <- data.frame(
+  Variables = c("MOYENNE", "ASSIDUITE", "RESTAURANT", "AGE",
+                "STRESS", "SOMMEIL", "TRAJET"),
+  Définitions = c(
+    "Moyenne générale de l'étudiant.",
+    "Taux d'assiduité aux cours magistraux et aux travaux dirigés.",
+    "Nombre de restaurants ou fast-foods par mois.",
+    "Âge de l'étudiant.",
+    "Degré de stress financier.",
+    "Durée moyenne de sommeil par nuit.",
+    "Temps de trajet pour se rendre à l'établissement."
+  ),
+  Modalités = c(
+    "Nombres réels de 0 à 20.",
+    "Nombres entiers de 1 (aucune) à 10 (extrêmement élevée).",
+    "Nombres réels positifs.",
+    "Nombres entiers positifs.",
+    "Nombres entiers de 1 (aucun) à 10 (extrêmement élevé).",
+    "Nombres réels positifs.",
+    "Nombres entiers positifs."
+  ),
+  stringsAsFactors = FALSE
+)
+
+quantis |>
+  kable("latex",
+        booktabs = T,
+        caption = "Variables quantitatives") |> 
+  kable_styling(
+    latex_options = c("scale_down",
+                      "HOLD_position",
+                      full_width = TRUE,
+                      font_size = 12)) |> 
+  column_spec(1:3,
+              background = "cyan") |> 
+  row_spec(0,
+           background = "blue",
+           color = "white")
+```
+
+
+## B. Variables qualitatives
+
+Dans les variables qualitatives, nous retrouvons FORMATION, qui correspond à la filière suivie par l'étudiant, comme économie et gestion ou d'autres domaines.
+
+Nous avons également REVISIONS, une variable qui indique le nombre d’heures de révisions effectuées chaque jour en moyenne, classées en trois catégories : 0-1 heure, 1-2 heures, et 2 heures ou plus.
+
+La variable PARTICULIERS renseigne si l’étudiant a suivi des cours particuliers durant ses études, avec deux modalités possibles : oui ou non.
+
+De plus, la variable TUTORAT indique si l’étudiant a participé à des sessions de tutorat pendant l'année, également codée en oui ou non.
+
+La variable BOURSE identifie les étudiants boursiers, avec les mêmes modalités : oui ou non.
+
+Nous avons également EMPLOI, qui signale si l’étudiant occupe un emploi en parallèle de ses études.
+
+La variable LOGEMENT fait référence au loyer payé par l'étudiant, et la variable ARGENT correspond au montant d'argent reçu en dehors des revenus issus d’un emploi étudiant, de la bourse ou des aides de la CAF.
+
+En outre, la variable DEPENSES estime les dépenses mensuelles de l’étudiant dans les loisirs, réparties en deux catégories : moins de 100 euros et 100 euros ou plus.
+
+La variable CAF mentionne si l’étudiant bénéficie d’aides de la CAF, et la variable TRANSPORT concerne le budget mensuel moyen consacré aux transports, classé en trois catégories : 0-15 euros, 15-30 euros, et 30 euros ou plus.
+
+La variable GENRE reflète le genre de l’étudiant, avec les modalités homme et femme.
+
+La variable STATUT représente le statut social des parents, classé en trois groupes : classe aisée, classe moyenne, et classe populaire.
+
+La variable SANTE identifie si l’étudiant a rencontré des problèmes de santé durant l’année.
+
+Enfin, la variable STRUCTURE indique le type de structure de formation fréquentée par l’étudiant, comme une université ou une autre institution.
+
+
+```{r}
+qualis <- data.frame(
+  Variables = c("FORMATION", "REVISIONS", "PARTICULIERS",
+                "TUTORAT", "BOURSE", "EMPLOI",
+                "LOGEMENT", "ARGENT", "DEPENSES",
+                "CAF", "TRANSPORT", "GENRE",
+                "STATUT", "SANTE", "STRUCTURE"
+                ),
+  Définitions = c(
+    "Formation de l'étudiant.",
+    "Nombre d'heures de révisions par jour en moyenne.",
+    "Suivi de cours particuliers durant les études.",
+    "Participation à du tutorat pendant l'année.",
+    "Étudiant boursier.",
+    "Emploi étudiant",
+    "Loyer payé par l'étudiant.",
+    "Argent reçu en dehors du travail étudiant, de la bourse et des aides de la CAF.",
+    "Estimation des dépenses mensuelles dans les loisirs.",
+    "Aides de la CAF.",
+    "Budget transport par mois en moyenne.",
+    "Genre de l'étudiant.",
+    "Statut social des parents.",
+    "Problèmes de santé durant l'année.",
+    "Structure de formation."
+  ),
+  Modalités = c(
+    "Économie et gestion \\ Autres",
+    "0 - 1h \\ 1 - 2h \\ 2h et plus",
+    "Oui \\ Non",
+    "Oui \\ Non",
+    "Oui \\ Non",
+    "Oui \\ Non",
+    "Oui \\ Non",
+    "Oui \\ Non",
+    "0 - 100 € \\ 100 € et plus",
+    "Oui \\ Non",
+    " 0 - 15 € \\ 15 - 30 € \\ 30 € et plus",
+    " Homme \\ Femme",
+    "Classe aisée \\ Classe moyenne \\ Classe populaire",
+    "Oui \\ Non",
+    "Université \\ Autres"
+  ),
+  stringsAsFactors = FALSE
+)
+
+qualis |>
+  kable("latex",
+        booktabs = T,
+        caption = "Variables qualitatives") |> 
+  kable_styling(
+    latex_options = c("scale_down",
+                      "HOLD_position",
+                      full_width = TRUE,
+                      font_size = 12)) |> 
+  column_spec(1:3,
+              background = "cyan") |> 
+  row_spec(0,
+           background = "blue",
+           color = "white") 
+```
+
+\newpage
+
+# IV. Importation et sauvegarde de la base
+
+```{r}
+Budget <- read.xlsx("data/student_budget_data_2023_2024.xlsx")
+
+write_csv(Budget, 
+          file = "Budget.csv")
+
+View(Budget)
+```
+
+\newpage
+
+# V. Mécanismes utilisés pour effacer les données
+
+Pour mener à bien notre analyse et remplacer les valeurs manquantes, nous allons dans un premier temps supprimer des valeurs afin d'introduire aléatoirement des données manquantes (NA), reproduisant ainsi une situation de données incomplètes.
+
+Pour ce faire, nous utilisons le code présenté ci-dessous.
+
+Nous avons choisi de retirer 10 % des données de notre base, soit un total de 315 valeurs.
+
+```{r}
+# Calcul du nombre total de cellules
+cellules <- nrow(Budget) * ncol(Budget)
+
+# Nombre de cellules à supprimer (10 %)
+sup <- round(0.1 * cellules)
+
+# Conversion de toutes les colonnes en caractères
+Budget_chr <- Budget |> 
+  mutate(across(everything(), as.character)) 
+
+# Copie sous forme longue
+Budget_long <- Budget_chr |> 
+  pivot_longer(everything(),
+               names_to = "variables", 
+               values_to = "valeurs") |> 
+  # Identifiant de chaque variable
+  group_by(variables) |> 
+  mutate(ID = row_number()) |> 
+  ungroup()
+
+# Sélection aléatoire de 10 % des cellules selon une distribution uniforme
+set.seed(123)
+indices <- integer(0)
+while(length(indices) < sup) {
+  indices <- unique(c(indices, round(runif(sup - length(indices), min = 1, max = nrow(Budget_long)))))
+}
+
+# Remplacement des cellules sélectionnées par NA
+Budget_long_na <- Budget_long |> 
+  mutate(valeurs = case_when(row_number() %in% indices ~ NA_character_,
+                        TRUE ~ valeurs))
+
+# Format large
+Budget2 <- Budget_long_na |>
+  pivot_wider(names_from = variables,
+              values_from = valeurs) |> 
+  select(-ID)
+
+print(Budget2)
+
+write_csv(Budget2, 
+          file = "Budget2.csv")
+```
+
+Nous avons 135 individus et 22 variables, ce qui donne 22 * 135 = 2970 cellules.
+
+```{r}
+sum(is.na(Budget2))
+```
+
+Nous obtenons bien 0,1 * 2970 = 297 valeurs manquantes.
+
+\newpage
+
+# VI. Analyse descriptive de la base de données
+
+
+## A. Visualisation globale des données
+
+```{r}
+View(Budget2)
+```
+
+Vérifions la nature des variables.
+
+```{r}
+str(Budget2)
+```
+
+Modifions le type de données des variables (passage de caractère à numérique ou facteur).
+
+```{r}
+Budget2 <- read_csv(
+  "Budget2.csv",
+  col_types = c("fnfffnffffnffffnnfnffn")
+)
+
+str(Budget2)
+```
+
+```{r}
+glimpse(Budget2)
+```
+
+```{r}
+save(Budget2, file="Budget.rda")
+```
+
+```{r}
+# Variables quantitatives
+
+quantis <- c("ASSIDUITE", "MOYENNE", "RESTAURANT", "AGE", "STRESS", "SOMMEIL", "TRAJET")
+
+# Variables qualitatives
+
+qualis <- c("FORMATION", "REVISIONS", "PARTICULIERS", "TUTORAT", "BOURSE",
+            "EMPLOI", "LOGEMENT", "ARGENT", "DEPENSES", "CAF", "TRANSPORT",
+            "GENRE","STATUT", "SANTE", "STRUCTURE")
+```
+
+Représenter toutes les variables sur un même graphique étant illisible, nous avons décidé de construire un graphique en fonction de la nature des variables, quantitative et qualitative.
+
+```{r}
+# Graphiques croisés des variables quantitatives
+
+plot(Budget2[, quantis])
+```
+
+```{r}
+# Graphiques croisés des variables qualitatives
+
+plot(Budget2[, qualis])
+```
+
+
+
+## B. Analyse descriptive univariée
+
+Désormais, nous allons procéder à une analyse descriptive univariée des variables explicatives et expliquée. Cette étape est cruciale pour nous permettre de mesurer la dispersion des données selon chaque variable. En effet, une analyse univariée a pour but de décrire et mesurer la répartition des données d’une seule variable. Nous débuterons par l’étude des variables quantitatives (1), suivie de l'examen des valeurs atypiques dans ces variables (2), et enfin, nous analyserons les variables qualitatives (3).
+
+### 1. Variables quantitatives
+
+```{r}
+# Statistiques
+
+summary(Budget2[, quantis])
+```
+
+```{r}
+# Graphique des données manquantes pour les variables quantitatives
+
+naniar::gg_miss_upset(Budget2[, quantis],
+                      nsets = 8,
+                      nintersects = 150)
+
+```
+
+Concernant les variables quantitatives, nous pouvons observer qu'il y a un total de 101 valeurs manquantes (NA).
+
+Les statistiques et ce graphique indiquent les valeurs manquantes suivantes :
+
+- 16 valeurs manquantes pour la variable ASSIDUITE.
+
+- 17 valeurs manquantes pour la variable MOYENNE.
+
+- 15 valeurs manquantes pour la variable RESTAURANT.
+
+- 14 valeurs manquantes pour la variable AGE.
+
+- 8 valeurs manquantes pour la variable STRESS.
+
+- 20 valeurs manquantes pour la variable SOMMEIL.
+
+- 11 valeurs manquantes pour la variable TRAJET.
+
+```{r}
+# Vecteur de couleurs
+couleurs <- c("lightseagreen", "lightpink", "mediumseagreen", "lightsalmon", "lightcoral", "thistle", "lightblue")
+
+# Distribution des valeurs des variables quantitatives
+
+par(mfrow = c(1, 1))
+
+# Graphique pour MOYENNE
+ggplot(Budget2, aes(x = MOYENNE)) +
+  geom_histogram(binwidth = 1, fill = couleurs[1], color = "black") +
+  labs(title = "", x = "MOYENNE", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique pour TRAJET
+ggplot(Budget2, aes(x = TRAJET)) +
+  geom_histogram(binwidth = 10, fill = couleurs[2], color = "black") +
+  labs(title = "", x = "TRAJET (en min)", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique pour ASSIDUITE
+ggplot(Budget2, aes(x = ASSIDUITE)) +
+  geom_bar(fill = couleurs[3], color = "black") +
+  labs(title = "", x = "ASSIDUITE", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique pour RESTAURANT
+ggplot(Budget2, aes(x = RESTAURANT)) +
+  geom_bar(fill = couleurs[4], color = "black") +
+  labs(title = "", x = "RESTAURANT", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique pour AGE
+ggplot(Budget2, aes(x = AGE)) +
+  geom_bar(fill = couleurs[5], color = "black") +
+  labs(title = "", x = "AGE", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique pour STRESS
+ggplot(Budget2, aes(x = STRESS)) +
+  geom_bar(fill = couleurs[6], color = "black") +
+  labs(title = "", x = "STRESS", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Graphique pour SOMMEIL
+ggplot(Budget2, aes(x = SOMMEIL)) +
+  geom_bar(fill = couleurs[7], color = "black") +
+  labs(title = "", x = "SOMMEIL", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Boites à moustaches des 4 premières variables quantitatives
+
+quantis1 <- quantis[1:4]
+
+Budget2 |>
+ pivot_longer(
+ cols = all_of(quantis1)
+ ) |>
+ ggplot() +
+ aes(y = value, x = "") +
+ facet_wrap(~ name, scales = "free_y") +
+ geom_violin() +
+ geom_boxplot() +
+ geom_jitter(alpha = 0.1) +
+ theme_light()
+
+
+# Boites à moustaches sur les 4 premières variables quantitatives
+
+quantis2 <- quantis[5:7]
+
+Budget2 |>
+ pivot_longer(
+ cols = all_of(quantis2)
+ ) |>
+ ggplot() +
+ aes(y = value, x = "") +
+ facet_wrap(~ name, scales = "free_y") +
+ geom_violin() +
+ geom_boxplot() +
+ geom_jitter(alpha = 0.1) +
+ theme_light()
+```
+
+Grâce à ces graphiques, nous pouvons visualiser les éventuelles valeurs atypiques (ou outliers) dans nos variables quantitatives. Cependant, d'après les distributions observées, il n'y a pas de points qui semblent clairement atypiques.
+
+
+### 2. Variables qualitatives
+
+```{r}
+# Statistiques
+
+summary(Budget2[, qualis])
+```
+
+```{r}
+# Graphique des données manquantes pour la première série de 8 variables qualitatives
+
+naniar::gg_miss_upset(Budget2[, qualis[1:8]],
+                      nsets = 8,
+                      nintersects = 150)
+```
+
+```{r}
+# Graphique des données manquantes pour la deuxième série de 7 variables qualitatives
+
+naniar::gg_miss_upset(Budget2[, qualis[9:15]],
+                      nsets = 8,
+                      nintersects = 150)
+```
+
+Concernant les variables qualitatives, nous constatons qu'il y a un total de 196 valeurs manquantes.
+
+Les statistiques et les graphiques révèlent les valeurs manquantes suivantes :
+
+- 10 valeurs manquantes pour la variable FORMATION.
+
+- 6 valeurs manquantes pour la variable REVISIONS.
+
+- 21 valeurs manquantes pour la variable PARTICULIERS.
+
+- 22 valeurs manquantes pour la variable TUTORAT.
+
+- 13 valeurs manquantes pour la variable BOURSE.
+
+- 11 valeurs manquantes pour la variable EMPLOI.
+
+- 14 valeurs manquantes pour la variable LOGEMENT.
+
+- 10 valeurs manquantes pour la variable ARGENT.
+
+- 12 valeurs manquantes pour la variable DEPENSES.
+
+- 9 valeurs manquantes pour la variable CAF.
+
+- 11 valeurs manquantes pour la variable TRANSPORT.
+
+- 14 valeurs manquantes pour la variable GENRE.
+
+- 15 valeurs manquantes pour la variable STATUT.
+
+- 13 valeurs manquantes pour la variable SANTE.
+
+- 15 valeurs manquantes pour la variable STRUCTURE.
+
+
+```{r}
+# Visualisation des lignes ayant des valeurs manquantes
+
+indice_na <- which(is.na(Budget2), arr.ind = TRUE)
+indice <- indice_na[,1]
+Budget2[indice,]
+```
+
+A l’aide de la fonction count, nous pouvons observer les statistiques descriptives des variables qualitatives.
+
+```{r}
+for (i in qualis) {
+  cat("Variable", i)
+  print(count(Budget2, Budget2[[i]]))
+}
+```
+
+Nous remarquons que certaines variables sont dominées par des modalités. Ainsi, la variable FORMATION est dominée par la modalité "Economie et gestion" avec 105 réponses sur 135, tandis que la modalité "Autres" représente seulement 20 réponses. En ce qui concerne la variable PARTICULIERS, la modalité "Non" est largement majoritaire avec 109 réponses, contre seulement 5 réponses pour la modalité "Oui". La variable STATUT est dominée par la modalité "Classe moyenne" avec 95 réponses, suivie de "Classe aisée" (13 réponses) et "Classe populaire" (12 réponses). Enfin, la variable SANTE est dominée par la modalité "Non" avec 101 réponses, tandis que "Oui" enregistre 21 réponses. Pour la variable STRUCTURE, "Université" prédomine avec 111 réponses, tandis que "Autres" ne compte que 9 réponses.
+
+Certaines catégories sont donc beaucoup plus fréquentes que les autres. Cela peut créer un déséquilibre dans les données, introduire un biais dans l'analyse et limiter la représentativité des données car les catégories sous-représentées ne sont pas suffisamment prises en compte.
+
+
+## C. Analyse descriptive bivariée
+
+Nous abordons maintenant l’analyse bivariée, qui consiste à explorer les variations d’une variable en fonction d’une autre afin de comprendre leur relation. Nous réaliserons ainsi trois analyses en fonction de la nature de la variable : une entre les variables quantitatives (1), une deuxième entre les variables qualitatives (2) et une dernière entre les variables quantitatives et qualitatives (3).
+
+### 1. Variables quantitatives - quantitatives
+
+```{r}
+# Nuage de points pour chaque paire de variables quantitatives
+
+for (i in quantis) {
+  for (j in quantis) {
+    if (i != j) {
+      p <- Budget2 |>
+        ggplot() +
+        aes(x = .data[[i]], y = .data[[j]]) +
+        geom_point() +
+        theme_classic()
+      
+      print(p)
+    }
+  }
+}
+
+```
+
+Cette série de graphiques représente les nuages de points pour chaque combinaison de deux variables quantitatives distinctes. Cela permet d'explorer visuellement les relations entre chaque paire de variables.
+
+
+Vérifions désormais la corrélation entre nos variables quantitatives.
+
+```{r}
+# Matrice de corrélation de Pearson
+
+cor(Budget2[, quantis], 
+    use="complete.obs")
+```
+
+```{r}
+# Test de Shapiro-Wilk sur chaque variable quantitative
+
+for (i in seq(1, length(quantis))) {
+  res <- shapiro.test(Budget2[[quantis[i]]])
+  cat(quantis[i])
+  print(res)
+}
+```
+
+Hormis MOYENNE avec une p-value supérieure à 0,05, toutes les autres variables ne suivent pas la loi normale.
+La corrélation de Spearman étant robuste, c'est à dire indépendante de la distribution des données, il faut calculer le coefficient de corrélation de Spearman.
+
+```{r}
+# Matrice de corrélation de Spearman
+
+cor(Budget2[, quantis],
+    use="complete.obs", method = c("spearman"))
+```
+
+```{r}
+# Diagramme pour visualiser la matrice de corrélation
+
+Budget2 |>
+  select(quantis) |>
+  drop_na() |>
+  cor(method = "spearman") |>
+  corrplot::corrplot.mixed()
+```
+
+Chaque coefficient est bien inférieur à la valeur absolue de 0,6.
+Il ne semble pas y avoir de corrélation entre ces variables.
+
+
+### 2. Variables qualitatives - qualitatives
+
+Pour effectuer cette analyse, nous générons une matrice évaluant l'indépendance entre chaque paire de variables catégorielles à l'aide du test du chi-deux.
+
+```{r}
+# Matrice d’indépendance des variables qualitatives
+
+ind_qualis = as.data.frame(Budget2[,qualis])
+sjp.chi2(ind_qualis, show.legend = TRUE)
+```
+
+L’analyse de la matrice d’indépendance des variables qualitatives est primordiale pour vérifier s'il existe des liens significatifs entre les variables qualitatives. Le coefficient varie entre 0 et 1. Une valeur proche de 0 indiquera une forte association entre les deux variables, entraînant une dépendance plus élevée. Réciproquement, une valeur proche de 1 signifiera une faible association.
+
+Nous pouvons constater que plusieurs intensités sont proches de 0, voire égale 0. Cela révèle une certaine dépendance entre les variables qualitatives.
+
+
+### 3. Variables quantitatives - qualitatives
+
+Étudions à présent comment les variables quantitatives varient en fonction de chaque modalité des variables qualitatives.
+
+```{r}
+# Visualisation des relations des quatre premières variables quantitatives avec chaque variable qualitative à travers des boîtes à moustaches, accompagnées de graphiques de distribution.
+
+for (qt in quantis[1:4]) {
+  for (ql in qualis) {
+    p <- Budget2 |>
+      ggplot() +
+      aes_string(x = qt, y = ql, color = ql) +
+      geom_violin() +
+      geom_boxplot(width = 0.3, alpha = 0.5) +
+      geom_jitter(alpha = 0.3) +
+      theme_minimal() +
+      labs(title = paste("Distribution de", qt, "en fonction de", ql))
+    
+    print(p)
+  }
+}
+
+```
+
+```{r}
+# Visualisation des relations des trois dernières variables quantitatives avec chaque variable qualitative à travers des boîtes à moustaches, accompagnées de graphiques de distribution.
+
+for (qt in quantis[5:7]) {
+  for (ql in qualis) {
+    p <- Budget2 |>
+      ggplot() +
+      aes_string(x = qt, y = ql, color = ql) +
+      geom_violin() +
+      geom_boxplot(width = 0.3, alpha = 0.5) +
+      geom_jitter(alpha = 0.3) +
+      theme_minimal() +
+      labs(title = paste("Distribution de", qt, "en fonction de", ql))
+    
+    print(p)
+  }
+}
+```
+
+Les graphiques générés permettent d'explorer la distribution des variables quantitatives pour chaque modalité des variables qualitatives, afin de comparer ces distributions avec celle des valeurs manquantes.
+Les boîtes à moustaches montrent la dispersion de la variable quantitative à travers la médiane, les quartiles et les valeurs aberrantes, tandis que les violons illustrent la densité de la distribution de la variable quantitative selon chaque catégorie de la variable qualitative.
+Ces éléments permettent d'observer les différences de variabilité entre les modalités et de les comparer à la catégorie des valeurs manquantes.
+
+\newpage
+
+# VII. Imputation des valeurs manquantes : trois techniques utilisées
+
+Cette partie se concentre sur l’étude de trois méthodes pour remplacer les valeurs manquantes : nous commencerons par la régression logistique binaire, suivie de l'imputation par la moyenne, et nous terminerons par l'imputation multiple grâce au package mice.
+L'objectif est de minimiser l'impact des données manquantes sur les résultats en sélectionnant les méthodes d’imputation les plus appropriées pour estimer ces valeurs.
+
+## A. Régression linéaire binaire
+
+### 1. Visualisation des données avec des boîtes à moustaches pour FORMATION, PARTICULIERS, TUTORAT, BOURSE, EMPLOI, LOGEMENT, ARGENT, CAF ET GENRE
+
+#### a. FORMATION
+
+```{r}
+# Boites à moustaches selon les modalités de FORMATION pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = FORMATION, color = FORMATION) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Economie et gestion**.
+
+
+#### b. PARTICULIERS
+
+```{r}
+# Boites à moustaches selon les modalités de PARTICULIERS pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = PARTICULIERS, color = PARTICULIERS) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Non**.
+
+
+#### c. TUTORAT
+
+```{r}
+# Boites à moustaches selon les modalités de TUTORAT pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = TUTORAT, color = TUTORAT) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Non**.
+
+
+#### d. BOURSE
+
+```{r}
+# Boites à moustaches selon les modalités de BOURSE pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = BOURSE, color = BOURSE) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Oui**.
+
+
+#### e. EMPLOI
+
+```{r}
+# Boites à moustaches selon les modalités de EMPLOI pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = EMPLOI, color = EMPLOI) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Oui**.
+
+
+#### f. LOGEMENT
+
+```{r}
+# Boites à moustaches selon les modalités de LOGEMENT pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = LOGEMENT, color = LOGEMENT) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Oui**.
+
+
+#### g. ARGENT
+
+```{r}
+# Boites à moustaches selon les modalités de ARGENT pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = ARGENT, color = ARGENT) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Oui**.
+
+
+#### h. CAF
+
+```{r}
+# Boites à moustaches selon les modalités de CAF pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = CAF, color = CAF) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Oui**.
+
+
+#### i. GENRE
+
+```{r}
+# Boites à moustaches selon les modalités de GENRE pour chaque variable quantitative
+
+Budget2 |>
+pivot_longer(
+  cols = where(is.numeric),
+  names_to = "mesure",
+  values_to = "valeur" ) |>
+  ggplot() +
+  aes(y = valeur, x = GENRE, color = GENRE) +
+  geom_boxplot() +
+  geom_jitter(alpha = 0.3) +
+
+  facet_wrap(~ mesure, scales = "free_y") +
+  theme_bw()
+```
+
+Nous constatons que les boites à moustaches correspondant aux valeurs manquantes présentent des caractéristiques qui se rapprochent davantage de celles de la modalité **Femmes**.
+
+
+### 2. Imputation
+
+#### a. FORMATION
+
+Avant d’effectuer une régression logistique binaire, il est nécessaire de binariser la variable FORMATION.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(For = case_when(
+    FORMATION == "Autres" ~ 0,
+    FORMATION == "Economie et gestion" ~ 1
+))
+```
+
+Ensuite, nous créons deux jeux de données : un premier qui permettra d'entrainer notre modèle et un second qui nous servira à vérifier la qualité de prédiction du modèle. 
+
+```{r}
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+formation_entrainement <- Budget2 |>
+  filter(!is.na(For)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+formation_verification <- anti_join(Budget2, formation_entrainement) |>
+  filter(!is.na(For))
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique1 <- glm(
+  For ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = formation_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique1)
+```
+
+Dans cette régression, trois variables sont significatives au seuil de 1 % : ASSIDUITE, RESTAURANT et TRAJET.
+Nous avons la variable AGE significative au seuil de 5 %.
+Enfin, notre variable SOMMEIL est significative au seuil de 10 %.
+
+En essayant de supprimer les variables dont les p-values étaient les plus élevées, notre modèle devenait moins pertinent.
+Nous gardons donc notre modèle initial.
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique1)
+```
+
+Le premier graphique, nous permet de vérifier les résidus de ce modèle, ces individus qui ressortent signifient que les résidus sont différents de leur valeur d’origine. Cependant, l’intervalle était bien compris entre -2 et 2 donc cela n’affecte en rien notre analyse.
+La même conclusion peut être faite pour les trois autres graphiques.
+
+Nous allons ensuite tester notre modèle de régression logistique binaire sur 20 % de nos données.
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction1 = predict(regression_logistique1,
+                      newdata = formation_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+formation_verification <- formation_verification |>
+  mutate(prediction1) |>
+  mutate(For_predi = case_when(prediction1 < 0 ~ "Autres",
+                               TRUE ~ "Economie et gestion"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable FORMATION
+
+formation_verification |>
+  count(FORMATION, For_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de FORMATION
+
+prediction2 = predict(regression_logistique1,
+                      newdata = filter(Budget2, is.na(FORMATION)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(FORMATION)) |>
+    mutate(prediction2) |>
+    mutate(FORMATION = case_when(prediction2 < 0 ~ "Autres",
+                                 TRUE ~ "Economie et gestion")) |>
+    select(- For),
+  Budget2 |> filter(!is.na(FORMATION)))
+```
+
+
+
+#### b. PARTICULIERS
+
+Concentrons-nous ensuite sur la variable PARTICULIERS.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Par = case_when(
+    PARTICULIERS == "Non" ~ 0,
+    PARTICULIERS == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+particuliers_entrainement <- Budget2 |>
+  filter(!is.na(Par)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+particuliers_verification <- anti_join(Budget2, particuliers_entrainement) |>
+  filter(!is.na(Par))
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique2 <- glm(
+  Par ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = particuliers_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique2)
+```
+
+Nous enlevons : 
+
+- STRESS
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique3 <- glm(
+  Par ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + TRAJET,
+  data = particuliers_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique3)
+```
+
+Nous avons 3 variables significatives au seuil de 10 % : ASSIDUITE, SOMMEIL et TRAJET.
+
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique3)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction3 = predict(regression_logistique3,
+                      newdata = particuliers_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+particuliers_verification <- particuliers_verification |>
+  mutate(prediction3) |>
+  mutate(Par_predi = case_when(prediction3 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable PARTICULIERS
+
+particuliers_verification |>
+  count(PARTICULIERS, Par_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de PARTICULIERS
+
+prediction4 = predict(regression_logistique3,
+                      newdata = filter(Budget2, is.na(PARTICULIERS)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(PARTICULIERS)) |>
+    mutate(prediction4) |>
+    mutate(PARTICULIERS = case_when(prediction4 < 0 ~ "Non",
+                                    TRUE ~ "Oui")) |>
+    select(- Par),
+  Budget2 |> filter(!is.na(PARTICULIERS)))
+```
+
+
+#### c. TUTORAT
+
+Concentrons-nous ensuite sur la variable TUTORAT.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Tut = case_when(
+    TUTORAT == "Non" ~ 0,
+    TUTORAT == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+tutorat_entrainement <- Budget2 |>
+  filter(!is.na(Tut)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+tutorat_verification <- anti_join(Budget2, tutorat_entrainement) |>
+  filter(!is.na(Tut))
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique4 <- glm(
+  Tut ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = tutorat_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique4)
+```
+
+Nous enlevons : 
+
+- RESTAURANT 
+
+- MOYENNE 
+
+- ASSIDUITE 
+
+- TRAJET
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique5 <- glm(
+  Tut ~ AGE + SOMMEIL + STRESS,
+  data = tutorat_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique5)
+```
+
+Nous avons 3 variables significatives : la variable AGE au seuil de 1 %, STRESS au seuil de 5 % et SOMMEIL au seuil de 10 %.
+
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique5)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction5 = predict(regression_logistique5,
+                      newdata = tutorat_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+tutorat_verification <- tutorat_verification |>
+  mutate(prediction5) |>
+  mutate(Tut_predi = case_when(prediction5 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable TUTORAT
+
+tutorat_verification |>
+  count(TUTORAT, Tut_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de TUTORAT
+
+prediction6 = predict(regression_logistique5,
+                      newdata = filter(Budget2, is.na(TUTORAT)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(TUTORAT)) |>
+    mutate(prediction6) |>
+    mutate(TUTORAT = case_when(prediction6 < 0 ~ "Non",
+                               TRUE ~ "Oui")) |>
+    select(- Tut),
+  Budget2 |> filter(!is.na(TUTORAT)))
+```
+
+
+#### d. BOURSE
+
+Concentrons-nous ensuite sur la variable BOURSE.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Bou = case_when(
+    TUTORAT == "Non" ~ 0,
+    TUTORAT == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+bourse_entrainement <- Budget2 |>
+  filter(!is.na(Bou)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+bourse_verification <- anti_join(Budget2, bourse_entrainement) |>
+  filter(!is.na(Bou))
+
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique6 <- glm(
+  Bou ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = bourse_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique6)
+```
+
+Nous avons décider d'enlever les variables suivantes : 
+
+- ASSIDUITE 
+
+- RESTAURANT 
+
+- STRESS 
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique7 <- glm(
+  Bou ~ AGE + MOYENNE + SOMMEIL + TRAJET,
+  data = bourse_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique7)
+```
+
+Les variables AGE et MOYENNE sont significatives au seuil de 5 % et la variable TRAJET est significative au seuil de 10 %.
+
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique7)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction7 = predict(regression_logistique7,
+                      newdata = bourse_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+bourse_verification <- bourse_verification |>
+  mutate(prediction7) |>
+  mutate(Bou_predi = case_when(prediction7 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable BOURSE
+
+bourse_verification |>
+  count(BOURSE, Bou_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de BOURSE
+
+prediction8 = predict(regression_logistique7,
+                      newdata = filter(Budget2, is.na(BOURSE)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(BOURSE)) |>
+    mutate(prediction8) |>
+    mutate(BOURSE = case_when(prediction8 < 0 ~ "Non",
+                              TRUE ~ "Oui")) |>
+    select(- Bou),
+  Budget2 |> filter(!is.na(BOURSE)))
+```
+
+
+#### e. EMPLOI
+
+Concentrons-nous ensuite sur la variable EMPLOI.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Emp = case_when(
+    EMPLOI == "Non" ~ 0,
+    EMPLOI == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+emploi_entrainement <- Budget2 |>
+  filter(!is.na(Emp)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+emploi_verification <- anti_join(Budget2, emploi_entrainement) |>
+  filter(!is.na(Emp))
+
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique10 <- glm(
+  Emp ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = emploi_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique10)
+```
+
+Les variables RESTAURANT et STRESS sont significatives au seuil de 5 %, et la variable TRAJET au seuil de 10 %.
+
+En essayant de supprimer les variables dont les p-values étaient les plus élevées, notre modèle devenait moins pertinent.
+Nous gardons donc notre modèle initial.
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique10)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction11 = predict(regression_logistique10,
+                       newdata = emploi_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+emploi_verification <- emploi_verification |> 
+  mutate(prediction11) |>
+  mutate(Emp_predi = case_when(prediction11 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable EMPLOI
+
+emploi_verification |>
+  count(EMPLOI, Emp_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de EMPLOI
+
+prediction12 = predict(regression_logistique10,
+                       newdata = filter(Budget2, is.na(EMPLOI)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(EMPLOI)) |>
+    mutate(prediction12) |>
+    mutate(TUTORAT = case_when(prediction12 < 0 ~ "Non",
+                               TRUE ~ "Oui")) |>
+    select(- Emp),
+  Budget2 |> filter(!is.na(EMPLOI)))
+```
+
+
+#### f. LOGEMENT
+
+Concentrons-nous ensuite sur la variable LOGEMENT.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Log = case_when(
+    LOGEMENT == "Non" ~ 0,
+    LOGEMENT == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+logement_entrainement <- Budget2 |>
+  filter(!is.na(Log)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+logement_verification <- anti_join(Budget2, logement_entrainement) |>
+  filter(!is.na(Log))
+
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique8 <- glm(
+  Log ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = logement_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique8)
+```
+
+Nous enlevons : 
+
+- AGE 
+
+- ASSIDUITE 
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique9 <- glm(
+  Log ~ MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = logement_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique9)
+```
+Nous obtenons trois variables significatives : SOMMEIL au seuil de 10 %, STRESS au seuil de 5 % et TRAJET au seuil de 1 %.
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique9)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction9 = predict(regression_logistique9,
+                      newdata = logement_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+logement_verification <- logement_verification |>
+  mutate(prediction9) |>
+  mutate(Log_predi = case_when(prediction9 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable LOGEMENT
+
+logement_verification |>
+  count(LOGEMENT, Log_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de LOGEMENT
+
+prediction10 = predict(regression_logistique9,
+                       newdata = filter(Budget2, is.na(LOGEMENT)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(LOGEMENT)) |>
+    mutate(prediction10) |>
+    mutate(LOGEMENT = case_when(prediction10 < 0 ~ "Non",
+                                TRUE ~ "Oui")) |>
+    select(- Log),
+  Budget2 |> filter(!is.na(LOGEMENT)))
+```
+
+
+#### g. ARGENT
+
+Concentrons-nous ensuite sur la variable ARGENT.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Arg = case_when(
+    ARGENT == "Non" ~ 0,
+    ARGENT == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+argent_entrainement <- Budget2 |>
+  filter(!is.na(Arg)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+argent_verification <- anti_join(Budget2, argent_entrainement) |>
+  filter(!is.na(Arg))
+
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique11 <- glm(
+  Arg ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = argent_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique11)
+
+```
+
+On décide d'enlever : 
+
+- ASSIDUITE 
+
+- SOMMEIL 
+
+- STRESS 
+
+- RESTAURANT 
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique12 <- glm(
+  Arg ~  AGE + MOYENNE + TRAJET,
+  data = argent_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique12)
+```
+
+La variable MOYENNE est significative au seuil de 5 % et TRAJET au seuil de 10 %.
+
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique12)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction13 = predict(regression_logistique12,
+                       newdata = argent_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+argent_verification <- argent_verification |>
+  mutate(prediction13) |>
+  mutate(Arg_predi = case_when(prediction13 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable ARGENT
+
+argent_verification |>
+  count(ARGENT, Arg_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de ARGENT
+
+prediction14 = predict(regression_logistique12,
+                       newdata = filter(Budget2, is.na(ARGENT)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(ARGENT)) |>
+    mutate(prediction14) |>
+    mutate(ARGENT = case_when(prediction14 < 0 ~ "Non",
+                              TRUE ~ "Oui")) |>
+    select(- Arg),
+  Budget2 |> filter(!is.na(ARGENT)))
+```
+
+
+#### h. CAF
+
+Concentrons-nous ensuite sur la variable CAF.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Caf = case_when(
+    CAF == "Non" ~ 0,
+    CAF == "Oui" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+caf_entrainement <- Budget2 |>
+  filter(!is.na(Caf)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+caf_verification <- anti_join(Budget2, caf_entrainement) |>
+  filter(!is.na(Caf))
+
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique13 <- glm(
+  Caf ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = caf_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique13)
+```
+
+Nous enlevons les variables suivantes : 
+
+- ASSIDUITE 
+
+- RESTAURANT 
+
+- SOMMEIL 
+
+- MOYENNE 
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique14 <- glm(
+  Caf ~ AGE + STRESS + TRAJET,
+  data = caf_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique14)
+```
+
+Nous obtenons trois variables significatives : TRAJET au seuil de 0.1 %, STRESS au seuil de 1 % et AGE au seuil de 10 %.
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique14)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction15 = predict(regression_logistique14,
+                       newdata = caf_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+caf_verification <- caf_verification |>
+  mutate(prediction15) |>
+  mutate(Caf_predi = case_when(prediction15 < 0 ~ "Non",
+                               TRUE ~ "Oui"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable CAF
+
+caf_verification |>
+  count(CAF, Caf_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de CAF
+
+prediction16 = predict(regression_logistique14,
+                       newdata = filter(Budget2, is.na(CAF)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(CAF)) |>
+    mutate(prediction16) |>
+    mutate(CAF = case_when(prediction16 < 0 ~ "Non",
+                           TRUE ~ "Oui")) |>
+    select(- Caf),
+  Budget2 |> filter(!is.na(CAF)))
+```
+
+
+#### i. GENRE
+
+Pour terminer, concentrons-nous sur la variable GENRE.
+
+```{r}
+# Binarisation de la variable
+
+Budget2 <- Budget2 |>
+  mutate(Gen = case_when(
+    GENRE == "Femme" ~ 0,
+    GENRE == "Homme" ~ 1
+))
+
+set.seed(123)
+
+# Entraînement sur 80 % des données non manquantes.
+
+genre_entrainement <- Budget2 |>
+  filter(!is.na(Gen)) |>
+  slice_sample(prop = 0.8)
+
+# Vérification sur les 20 % des données non manquantes restantes
+
+genre_verification <- anti_join(Budget2, genre_entrainement) |>
+  filter(!is.na(Gen))
+
+```
+
+A présent, nous pouvons passer à la régression logistique binaire.
+
+```{r}
+# Création du modèle de régression logistique binaire
+
+regression_logistique15 <- glm(
+  Gen ~ AGE + ASSIDUITE + MOYENNE + RESTAURANT + SOMMEIL + STRESS + TRAJET,
+  data = genre_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour le modèle
+
+car::Anova(regression_logistique15)
+```
+
+Nous enlevons : 
+
+- AGE 
+
+- RESTAURANT 
+
+```{r}
+# Modèle le plus performant
+
+regression_logistique16 <- glm(
+  Gen ~ ASSIDUITE + MOYENNE + SOMMEIL + STRESS + TRAJET,
+  data = genre_entrainement,
+  family = binomial
+)
+
+# Test d'Anova pour ce modèle
+
+car::Anova(regression_logistique16)
+```
+
+Nous obtenons deux variables significatives : MOYENNE au seuil de 5 % et ASSIDUITE au seuil de 1 %.
+
+```{r}
+# Graphiques évaluant la qualité et la validité du modèle
+
+plot(regression_logistique16)
+```
+
+```{r}
+# Prédiction du modèle sur les 20 % des données non manquantes restantes
+
+prediction17 = predict(regression_logistique16,
+                       newdata = genre_verification)
+
+# Ajout de la prédiction parmi les 20 % de données en attribuant à chaque observation l'une des deux modalités
+
+genre_verification <- genre_verification |>
+  mutate(prediction17) |>
+  mutate(Gen_predi = case_when(prediction17 < 0 ~ "Femme",
+                               TRUE ~ "Homme"))
+```
+
+```{r}
+# Comparaison des prédictions du modèle avec les vraies valeurs de la variable GENRE
+
+genre_verification |>
+  count(GENRE, Gen_predi)
+```
+
+```{r}
+# Application du modèle de régression logistique binaire pour prédire les valeurs manquantes de GENRE
+
+prediction18 = predict(regression_logistique16,
+                       newdata = filter(Budget2, is.na(GENRE)))
+
+# Imputation de ces données manquantes dans notre base de données Budget2
+
+Budget2 <- bind_rows(
+  Budget2 |>
+    filter(is.na(GENRE)) |>
+    mutate(prediction18) |>
+    mutate(GENRE = case_when(prediction18 < 0 ~ "Femme",
+                             TRUE ~ "Homme")) |>
+    select(- Gen),
+  Budget2 |> filter(!is.na(GENRE)))
+```
+
+```{r}
+# Supression des variables non nécessaires
+
+sup <- c("For", "Par", "Tut", "Bou", "Emp", "Log", "Arg", "Caf", "Gen",
+         "prediction2", "prediction4", "prediction6",
+         "prediction8", "prediction10", "prediction12",
+         "prediction14","prediction16", "prediction18")
+
+Budget2 <- Budget2 |> 
+  select(-all_of(sup))
+```
+
+
+
+## B. Remplacement par la moyenne
+
+### 1. Visualisation des données manquantes pour la variable MOYENNE
+
+Procédons maintenant à l'imputation des valeurs manquantes de la variable MOYENNE. Pour cela, nous identifions les modalités des variables ASSIDUITE et REVISIONS associées à chaque valeur manquante. Ensuite, nous calculons la moyenne de MOYENNE pour les individus ayant les mêmes modalités. Cette moyenne est ensuite utilisée pour remplacer les valeurs manquantes correspondant à ces modalités.
+
+En premier lieu, nous visualisons les lignes présentant les valeurs absentes.
+
+```{r}
+# Lignes contenant des valeurs manquantes pour la variable MOYENNE.
+
+moy_na <- which(is.na(Budget2$MOYENNE))
+moy_na
+```
+
+
+Ensuite, nous déterminons les modalités des variables ASSIDUITE et REVISIONS pour les individus sans donnée pour MOYENNE.
+
+```{r}
+# Modalités des variables ASSIDUITE ET REVISIONS pour les individus qui n'ont pas de donnée pour MOYENNE
+
+Budget2 |> 
+  select(ASSIDUITE, REVISIONS, MOYENNE) |> 
+  filter(is.na(MOYENNE))
+```
+
+
+### 2. Imputation
+
+Puis, nous calculons la moyenne de la variable MOYENNE pour les individus partageant les mêmes modalités et ayant une valeur définie pour MOYENNE.
+```{r}
+# Moyennes des individus ayant des modalités identiques à ceux qui n'ont pas de valeur dans la variable MOYENNE
+
+moyenne81 <- Budget2 |>
+  filter(ASSIDUITE == "8" & REVISIONS == "1 - 2h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne81
+
+
+moyenne71 <- Budget2 |>
+  filter(ASSIDUITE == "7" & REVISIONS == "1 - 2h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne71
+
+
+moyenne101 <- Budget2 |>
+  filter(ASSIDUITE == "10" & REVISIONS == "1 - 2h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne101
+
+
+moyenne102 <- Budget2 |>
+  filter(ASSIDUITE == "10" & REVISIONS == "2h et plus") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne102
+
+
+moyenne0 <- Budget2 |>
+  filter(REVISIONS == "0 - 1h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne0
+
+
+moyenne100 <- Budget2 |>
+  filter(ASSIDUITE == "10" & REVISIONS == "0 - 1h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne100
+
+
+moyenne62 <- Budget2 |>
+  filter(ASSIDUITE == "6" & REVISIONS == "2h et plus") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne62
+
+
+moyenne91 <- Budget2 |>
+  filter(ASSIDUITE == "9" & REVISIONS == "1 - 2h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne91
+
+
+moyenne80 <- Budget2 |>
+  filter(ASSIDUITE == "8" & REVISIONS == "0 - 1h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne80
+
+
+moyenne60 <- Budget2 |>
+  filter(ASSIDUITE == "6" & REVISIONS == "0 - 1h") |>
+  select(where(is.numeric)) |>
+  summarise(
+    across(
+      everything(),
+      ~ mean(.x, na.rm = TRUE) |>
+        round()
+    ) )
+
+moyenne60
+```
+
+
+Enfin, nous remplaçons les valeurs manquantes de MOYENNE en fonction des modalités de ASSIDUITE et REVISIONS, en utilisant la moyenne appropriée pour chaque combinaison de modalités.
+
+```{r}
+# Imputations par les moyennes calculées
+
+moy <- c(moyenne81[[1, 2]], moyenne71[[1, 2]], moyenne101[[1, 2]], moyenne102[[1, 2]],
+         moyenne0[[1, 2]], moyenne101[[1, 2]], moyenne100[[1, 2]], moyenne62[[1, 2]],
+         moyenne100[[1, 2]], moyenne0[[1, 2]], moyenne101[[1, 2]], moyenne81[[1, 2]],
+         moyenne91[[1, 2]], moyenne81[[1, 2]], moyenne80[[1, 2]], moyenne101[[1, 2]],
+         moyenne60[[1, 2]])
+
+
+# Boucle for pour modifier toutes les valeurs
+m = 0
+for (i in moy_na) {
+  m  <- m + 1
+  Budget2$MOYENNE[i] <- moy[m]
+}
+```
+
+
+
+## C. MICE
+
+Il nous reste des valeurs manquantes à remplacer dans 8 variables différentes. Pour ce faire, nous allons procéder à une troisième méthode de remplacement qui est la méthode d'imputation multiple MICE.
+
+Nous commençons par utiliser une fonction pour visualiser le modèle de valeurs manquantes.
+Celle-ci indique entre autres quelles colonnes présentent des données manquantes et combien d'observations sont affectées.
+
+```{r}
+md.pattern(Budget2)
+```
+
+
+Nous effectuons ensuite une imputation multiple sur un jeu de données contenant des valeurs manquantes.
+
+```{r}
+budget_impute <- mice(Budget2, m = 5)
+```
+
+
+Puis, nous accédons directement aux valeurs imputées générées.
+
+```{r}
+budget_impute$imp
+```
+
+
+Nous pouvons désormais consulter pour modifier si nécessaire les méthodes d’imputation utilisées pour chaque variable.
+
+```{r}
+budget_impute$method
+```
+
+
+Des différentes méthodes d'imputation sont utilisées en fonction du type de variable et de la nature des données manquantes. pour les variables continues comme ASSIDUITE, STRESS, et SOMMEIL, la méthode pmm (Predictive Mean Matching) est utilisée, ce qui permet d'imputer les valeurs manquantes en tirant des valeurs proches des prédictions des autres observations. Pour les variables binaires comme PARTICULIERS et EMPLOI, la méthode logreg (régression logistique) est appliquée, qui remplace les valeurs manquantes en fonction des probabilités d'appartenir à l'une des deux catégories possibles. Les variables catégorielles, telles que REVISIONS, bénéficient de la méthode polyreg (régression polynomiale), qui est adaptée aux variables avec plusieurs catégories. Certaines variables, comme FORMATION, MOYENNE, et LOGEMENT, ne nécessitent pas d'imputation ou sont exclues du processus, car elles ne contiennent pas de valeurs manquantes. 
+
+
+Nous choisissons l'imputation 3 pour continuer le MICE. 
+```{r}
+budget_complete_mice <- mice::complete(budget_impute, 3)
+plot(budget_impute)
+```
+
+
+Nous utilisons maintenant la commande DensityPlot pour visualiser la distribution des valeurs imputées pour chaque variable dans notre jeu de données. Elle est particulièrement utile pour examiner la qualité et la cohérence des imputations.
+```{r}
+densityplot(budget_impute)
+```
+
+Ici, nous pouvons voir que les valeurs imputées (ligne rouge) suivent, généralement, les valeurs observées (ligne bleue).
+
+
+```{r}
+# Base de données finale sans valeur manquante
+
+View(budget_complete_mice)
+```
+
+\newpage
+
+# VIII. Conclusion
+
+En conclusion, pour remplacer nos différentes valeurs manquantes nous avons procéder à 3 méthodes, cela nous a permis d’éviter une perte d’information pouvant être importante.
+
+En comparant l’ancienne à la nouvelle base nous avons pu relever de très faibles différences.
+
+Par exemple, pour la ligne 9, concernant TUTORAT, la valeur observée etait "Non" et la valeur prédite est "Non".
+Pour la ligne 16, à FORMATION, la valeur observée était "Autres" et la valeur prédite est "Autres".
+Pour la ligne 18, à MOYENNE, la valeur observée était "17" et la valeur prédite est "10,85". Cela est peut être dû au fait que la valeur "17" est une valeur extrême comparée aux autres. Par exemple, à la ligne 133, la valeur prédite est "13" et la valeur observée est "13" également. 
+Pour la ligne 24, à ASSIDUITE, la valeur observée était "9" et la valeur prédite est "0". 
+
+Il y a donc une bonne cohérence entre l’ancienne et la nouvelle base de données, ce qui prouve que ces méthodes sont efficaces.
+
