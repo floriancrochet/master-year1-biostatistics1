@@ -84,13 +84,14 @@ write.csv(budget_complete, "Budget_imputed.csv", row.names = FALSE)
 master-year1-biostatistics1/
 │
 ├── data/
-│   └── student_budget_data_2023_2024.xlsx   # Raw survey dataset
+│   └── student_budget_data_2023_2024.xlsx
 ├── report/
-│   └── report.pdf                           # Final PDF report
-├── LICENSE                                  # MIT License
+│   └── report.pdf
+├── .gitignore
+├── LICENSE
 ├── README.md
-├── master-year1-biostatistics1.Rproj        # RStudio project file
-└── project.qmd                              # Quarto source document
+├── master-year1-biostatistics1.Rproj
+└── project.qmd
 ```
 
 ---
